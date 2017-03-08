@@ -1,3 +1,4 @@
+import time
 import tensorflow as tf
 import numpy as np
 import scipy as sp
@@ -10,38 +11,55 @@ from sklearn.decomposition import PCA
 from sklearn.preprocessing import LabelBinarizer
 from sklearn import datasets
 
-class LadderNetwork(BaseEstimator):
-    hyperparameters = {
-        'learning_rate': 0.01,
-        'denoise_cost_init': 10,
-        'denoise_cost_decay': 'hyperbolic_decay',
-        'denoise_cost_param': 1,
-        'noise_std': 0.5
-    }
 
-    def __init__(self, layers):
+hyperparameters = {
+    'learning_rate': 0.01,
+    'denoise_cost_init': 10,
+    'denoise_cost_decay': 'hyperbolic_decay',
+    'denoise_cost_param': 1,
+    'noise_std': 0.05,
+    'batch_size': 256
+}
+
+class LadderNetwork(BaseEstimator):
+    def __init__(self, layers, verbose=True, **params):
         self.layers, self.activation = zip(*layers)
-        self.clean = None
-        self.corrupted = None
-        self.decoder = None
         self.session = None
         self.batch_size = -1
-        self.learning_rate = tf.constant(LadderNetwork.hyperparameters['learning_rate'])
+        self.params = params
+        self.learning_rate = tf.constant(params['learning_rate'])
         self.denoise_cost = tf.constant(
-            get_decay(LadderNetwork.hyperparameters['denoise_cost_decay'])(
-                LadderNetwork.hyperparameters['denoise_cost_init'],
-                LadderNetwork.hyperparameters['denoise_cost_param'],
+            get_decay(params['denoise_cost_decay'])(
+                params['denoise_cost_init'],
+                params['denoise_cost_param'],
                 len(self.layers)
             ))
-        self.noise_std = tf.constant(LadderNetwork.hyperparameters['noise_std'])
+        self.noise_std = tf.constant(params['noise_std'])
         self.inputs = tf.placeholder(tf.float32, shape=(None, self.layers[0]))
         self.outputs = tf.placeholder(tf.float32)
-        self.clean, self.corrupted, self.decoder = self.__build()
+        self.__build()
+        self.session = tf.InteractiveSession()
+        print('- Initializing weights...')
+        self.session.run(tf.global_variables_initializer())
+        print('- Weights initialized!')
+        self.supervised_summary = None
+        self.unsupervised_summary = None
+        if verbose:
+            print('- Creating logging instances...')
+            self.writer = self.__log_all_costs()
+            print('- Logging instances created!')
+        else:
+            self.writer = None
+        self.accuracy = self.supervised_accuracy()
 
     def __build(self):
-        clean, corrupted = self.__build_encoder()
-        decoder = self.__build_decoder(corrupted, clean)
-        return clean, corrupted, decoder
+        print('- Building Ladder Network...')
+        self.clean, self.corrupted = self.__build_encoder()
+        self.decoder = self.__build_decoder(self.corrupted, self.clean)
+        self.supervised_optimizer, self.supervised_cost = self.__build_supervised_learning_rule()
+        self.unsupervised_optimizer, self.unsupervised_cost, self.denoising_costs = \
+            self.__build_unsupervised_learning_rule()
+        print('- Ladder Network built!')
 
     def __encoder_weights(self):
         with tf.name_scope('encoder'):
@@ -63,6 +81,7 @@ class LadderNetwork(BaseEstimator):
             h_tilde - output of the corrupted encoder's layers
         :return: None
         """
+        print('\t- Building Encoder...')
         def encoder_(input, encoder):
             z_pre = []
             h = []
@@ -88,8 +107,11 @@ class LadderNetwork(BaseEstimator):
             if clean:
                 return h, mean, variance, z_pre
             return h, z_pre
+        print('\t\t- Initializing Encoder weights...')
         clean, corrupted = self.__encoder_weights()
+        print('\t\t\t- Building clean encoder...')
         h, mean, variance, z_pre_cl = encoder_(self.inputs, clean)
+        print('\t\t\t- Building corrupted encoder...')
         h_tilde, z_pre = encoder_(self.inputs, corrupted)
         clean.activations = h
         clean.mean = mean
@@ -97,6 +119,7 @@ class LadderNetwork(BaseEstimator):
         clean.preactivations = z_pre_cl
         corrupted.activations = h_tilde
         corrupted.preactivations = z_pre
+        print('\t- Encoder built!')
         return clean, corrupted
 
     def __decoder_weights(self):
@@ -109,6 +132,8 @@ class LadderNetwork(BaseEstimator):
         return LadderNetwork.Decoder(decoder_weights)
 
     def __build_decoder(self, corrupted_encoder, clean_encoder):
+        print('\t- Building decoder...')
+        print('\t\t- Initializing decoder weights...')
         decoder = self.__decoder_weights()
         decoder.encoder = corrupted_encoder
         def decoder_():
@@ -120,16 +145,19 @@ class LadderNetwork(BaseEstimator):
                         u = decoder.encoder.activations[-1]
                     else:
                         u = tf.matmul(z_hat[l + 1], decoder.weights[l + 1])
-                    z_hat[l] = LadderNetwork.denoise_gauss(z_pre[l], u, self.layers[l + 1])
+                    z_hat[l] = LadderNetwork.Decoder.denoise_gauss(z_pre[l], u, self.layers[l + 1])
                     z_hat[l] = (z_hat[l] - clean_encoder.mean[l]) / (clean_encoder.variance[l] + tf.constant(10e-8))
             return z_hat
+
         z_hat = decoder_()
         decoder.activations = z_hat
+        print('\t- Decoder built!')
         return decoder
 
     def __supervised_cost(self):
         with tf.name_scope('supervised_cost'):
-            cost = -tf.reduce_mean(tf.reduce_sum(self.outputs * tf.log(self.corrupted.activations[-1]), 1)) # why corrupted
+            cost = -tf.reduce_mean(
+                tf.reduce_sum(self.outputs * tf.log(self.clean.activations[-1]), 1))  # why corrupted
         return cost
 
     def __unsupervised_cost(self):
@@ -139,18 +167,70 @@ class LadderNetwork(BaseEstimator):
                 with tf.name_scope('denoise_cost_' + str(l)):
                     denoise.append(
                         tf.reduce_mean(
-                            tf.square(self.decoder.activations[l] - self.corrupted.preactivations[l]),
-                            1
-                        ) * self.denoise_cost[l]
+                            tf.reduce_sum(
+                                tf.square(self.decoder.activations[l] - self.corrupted.preactivations[l]),
+                                1
+                            ) * self.denoise_cost[l]
+                        )
                     )
                 pass
             u_cost = tf.add_n(denoise)
-        return u_cost
+        return u_cost, denoise
 
-    def cost(self):
-        cost = self.__supervised_cost()
-        u_cost = self.__unsupervised_cost()
-        return cost, u_cost
+    def __build_unsupervised_learning_rule(self):
+        print('\t- Building unsupervised learning rule...')
+        with tf.name_scope('unsup_learning_rule'):
+            u_cost, denoise_costs = self.__unsupervised_cost()
+            optimizer = tf.train.AdamOptimizer(self.params['learning_rate']).minimize(u_cost)
+        print('\t- Unsupervised learning rule built!')
+        return optimizer, u_cost, denoise_costs
+
+    def __build_supervised_learning_rule(self):
+        print('\t- Building supervised learning rule...')
+        with tf.name_scope('sup_learning_rule'):
+            cost = self.__supervised_cost()
+            optimizer = tf.train.AdamOptimizer(self.params['learning_rate']).minimize(cost)
+        print('\t- Supervised learning rule built!')
+        return optimizer, cost
+
+    def train_on_batch_supervised(self, X, y, step=[0]):
+        if self.supervised_summary is not None:
+            summary, _ = self.session.run([self.supervised_summary, self.supervised_optimizer],
+                                          feed_dict={self.inputs: X, self.outputs: y})
+            if step[0] % 5 == 0:
+                self.writer.add_summary(summary, step[0])
+                self.writer.flush()
+            step[0] += 1
+        else:
+            self.session.run(self.supervised_optimizer, feed_dict={self.inputs: X, self.outputs: y})
+
+    def train_on_batch_unsupervised(self, X, step=[0]):
+        if self.unsupervised_summary is not None:
+            summary, _ = self.session.run([self.unsupervised_summary, self.unsupervised_optimizer],
+                                          feed_dict={self.inputs: X})
+            if step[0] % 5 == 0:
+                self.writer.add_summary(summary, step[0])
+                self.writer.flush()
+            step[0] += 1
+        else:
+            self.session.run(self.unsupervised_optimizer, feed_dict={self.inputs: X})
+        pass
+
+    def supervised_accuracy(self):
+        with tf.name_scope('accuracy'):
+            correct_prediction = tf.equal(tf.argmax(self.clean.activations[-1], 1), tf.argmax(self.outputs, 1))
+            accuracy = tf.reduce_mean(tf.cast(correct_prediction, "float")) * tf.constant(100.0)
+        return accuracy
+
+    def __log_all_costs(self):
+        sup_summary = tf.summary.scalar('supervised cost', self.supervised_cost)
+        unsup_summary = tf.summary.scalar('unsupervised cost', self.unsupervised_cost)
+        denoise_summary = []
+        for i, d_cost in enumerate(self.denoising_costs):
+            denoise_summary.append(tf.summary.scalar('denoising cost on layer {0}'.format(str(i)), d_cost))
+        self.supervised_summary = tf.summary.merge([sup_summary])
+        self.unsupervised_summary = tf.summary.merge([unsup_summary, *denoise_summary])
+        return tf.summary.FileWriter('./logs/train_summary', self.session.graph)
 
     class Encoder:
         def __init__(self, weights, beta, gamma):
@@ -174,43 +254,37 @@ class LadderNetwork(BaseEstimator):
             self.activations = None
             self.encoder = None
 
+        @staticmethod
+        def denoise_gauss(z, u, size):
+            """
+            :param size: size of vector u
+            :param z tensor of corrupted activations of the l-th layer of noisy encoder
+            :param u tensor of activations on the l+1 - th layer of the decoder (assumedly batch-normalized)
+            :return z_hat denoised activations
+            """
+            with tf.name_scope('gaussian_denoise'):
+                # assert z.get_shape() == u.get_shape() -- always false
+                w = lambda init, name: tf.Variable(initial_value=init * tf.ones([size]), name=name)
+                b_0 = w(0., 'b_0')
+                w_0z = w(1., 'w_0z')
+                w_0u = w(0., 'w_0u')
+                w_0zu = w(0., 'w_0zu')
+                w_sigma = w(1., 'w_sigma')
+                b_1 = w(0., 'b_1')
+                w_1z = w(1., 'w_1z')
+                w_1u = w(0., 'w_1u')
+                w_1zu = w(0., 'w_1zu')
+                activation = b_0 + w_0z * z + w_0u * u + w_0zu * z * u + \
+                             w_sigma * tf.sigmoid(b_1 + w_1z * z + w_1u * u + w_1zu * z * u)
+            return activation
 
-    @staticmethod
-    def denoise_gauss(z, u, size):
-        """
-        :param z tensor of corrupted activations of the l-th layer of noisy encoder
-        :param u tensor of activations on the l+1 - th layer of the decoder (assumedly batch-normalized)
-        :return z_hat denoised activations
-        """
-        with tf.name_scope('gaussian_denoise'):
-            #assert z.get_shape() == u.get_shape() -- always false
-            w = lambda init, name: tf.Variable(initial_value=init * tf.ones([size]), name=name)
-            b_0 = w(0., 'b_0')
-            w_0z = w(1., 'w_0z')
-            w_0u = w(0., 'w_0u')
-            w_0zu = w(0., 'w_0zu')
-            w_sigma = w(1., 'w_sigma')
-            b_1 = w(0., 'b_1')
-            w_1z = w(1., 'w_1z')
-            w_1u = w(0., 'w_1u')
-            w_1zu = w(0., 'w_1zu')
-            activation = b_0 + w_0z * z + w_0u * u + w_0zu * z * u + \
-                         w_sigma * tf.sigmoid(b_1 + w_1z * z + w_1u * u + w_1zu * z * u)
-        return activation
-
-    @staticmethod
-    def batch_norm(batch):
-        with tf.name_scope('batch_norm'):
-            mean, variance = tf.nn.moments(batch, axes=[0])
-            norm = (batch - mean) / tf.sqrt(variance + tf.constant(1e-9))
-        return norm
 
 def load_data(path):
     train = pd.read_csv(path + '/train.csv').drop('id', axis=1, inplace=False)
     test = pd.read_csv(path + '/test.csv').drop('id', axis=1, inplace=False)
     train_Y = LabelBinarizer().fit_transform(train.target)
     train.drop('target', axis=1, inplace=True)
-    return train, train_Y, test
+    return train.values, train_Y, test.values
 
 if __name__ == '__main__':
     layers = [
@@ -220,12 +294,25 @@ if __name__ == '__main__':
         (128, tf.nn.relu),
         (9, tf.nn.softmax)
     ]
-    nn = LadderNetwork(layers)
-    cost, u_cost = nn.cost()
-    session = tf.InteractiveSession()
-    session.run(tf.global_variables_initializer())
-    learning_rate = tf.Variable(LadderNetwork.hyperparameters['learning_rate'], trainable=False)
-    supervised = tf.train.AdamOptimizer(learning_rate).minimize(cost)
-    unsupervised = tf.train.AdamOptimizer(learning_rate).minimize(u_cost)
-    writer = tf.summary.FileWriter('./logs/', session.graph)
-    input('done!')
+    train, labels, test = load_data('./data')
+    batch_size = hyperparameters['batch_size']
+    ladder = LadderNetwork(layers, **hyperparameters)
+    input('All done to start learning!')
+    for epoch in range(30):
+        print('epoch %d' % epoch)
+        perm = np.random.permutation(len(train) - 300)
+        train = train[perm]
+        labels = labels[perm]
+        test = test[np.random.permutation(len(test) - 300)]
+        sup_batch = len(train) // 2000
+        unsup_batch = len(test) // 2000
+        for i in range(1900):
+            X = train[i * sup_batch:(i + 1) * sup_batch]
+            Y = labels[i * sup_batch:(i + 1) * sup_batch]
+            Z = np.vstack([test[i * unsup_batch: (i + 1) * unsup_batch], X])
+            if i % 50 == 0:
+                print('step %d' % i)
+                print('total cost: %d' % (ladder.unsupervised_cost + ladder.supervised_cost).eval(
+                      feed_dict={ladder.inputs: X, ladder.outputs: Y}))
+            ladder.train_on_batch_supervised(X, Y)
+            ladder.train_on_batch_unsupervised(Z)
