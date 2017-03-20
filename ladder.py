@@ -27,7 +27,7 @@ class LadderNetwork(BaseEstimator):
                  denoise_cost_init=None, denoise_cost_param=None):
         self.layers, self.activation = zip(*layers)
         self.batch_size = -1
-        self.graph = tf.get_default_graph()
+        self.graph = tf.Graph()
         self.session = tf.get_default_session()
         if self.session is not None:
             self.session.close()
@@ -48,7 +48,7 @@ class LadderNetwork(BaseEstimator):
         self.supervised_histograms = None
         self.unsupervised_histograms = None
         self.writer = None
-        self.session = tf.Session(graph=self.graph)
+        self.session = tf.InteractiveSession(graph=self.graph)
         self.session.run(tf.global_variables_initializer())
 
     def __check_valid(self):
@@ -165,7 +165,8 @@ class LadderNetwork(BaseEstimator):
     def __supervised_cost(self):
         with self.graph.name_scope('supervised_cost'):
             cost = -tf.reduce_mean(
-                tf.reduce_sum(self.outputs * tf.log(self.clean.activations[-1]), 1))  # why corrupted
+                tf.reduce_sum(self.outputs * tf.log(self.clean.activations[-1]) +
+                              (1 - self.outputs) * tf.log(1 - self.clean.activations[-1]), 1))  # why corrupted
         return cost
 
     def __unsupervised_cost(self):
@@ -294,7 +295,7 @@ class LadderNetwork(BaseEstimator):
         self.__check_valid()
         return self.session.run(self.predict_probas, feed_dict={self.inputs: X})
 
-    def fit(self, X, y, epochs=5, batch_size=128, unsupervised_ratio=None):
+    def fit(self, X, y, epochs=5, batch_size=128, verbose=False, unsupervised_ratio=None):
         """
         fits model
         this method should be launched in the session scope
@@ -315,9 +316,12 @@ class LadderNetwork(BaseEstimator):
             ratio = len(X) / len(y)
         for epoch_num in range(epochs):
             print('Epoch No. {0}'.format(str(epoch_num)))
-            for unsupervised, (supervised, labels) in semisupervised_batch_iterator(X, y, batch_size, ratio):
+            for i, (unsupervised, (supervised, labels)) in enumerate(semisupervised_batch_iterator(X, y, batch_size, ratio)):
                 self.train_on_batch_supervised(supervised, labels)
                 self.train_on_batch_unsupervised(unsupervised)
+                if i % 10 == 0 and verbose:
+                    print('iter: %d' % i)
+
 
     class Encoder:
         def __init__(self, weights, beta, gamma):
