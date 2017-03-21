@@ -57,7 +57,10 @@ def semisupervised_batch_iterator(X, y, batch_size, ratio):
     Z, X = X, X[:len(y)]
     perm = np.random.permutation(len(X))
     perm_unsupervised = np.random.permutation(len(Z))
-    unsupervised_batch_num = len(Z) // unsupervised_batch_size
+    if ratio == 0.0:
+        unsupervised_batch_num = 1
+    else:
+        unsupervised_batch_num = len(Z) // unsupervised_batch_size
     for batch_cnt in range(len(X) // batch_size):
         start = batch_cnt * batch_size
         end = (batch_cnt + 1) * batch_size
@@ -71,5 +74,8 @@ def semisupervised_batch_iterator(X, y, batch_size, ratio):
             end = len(X)
         X_batch = X[perm[start:end]]
         y_batch = y[perm[start:end]]
-        Z_batch = Z[perm_unsupervised[start_unsupervised:end_unsupervised]]
+        if ratio == 0.0:
+            Z_batch = None
+        else:
+            Z_batch = Z[perm_unsupervised[start_unsupervised:end_unsupervised]]
         yield Z_batch, (X_batch, y_batch)

@@ -121,8 +121,9 @@ layers = [
         (64, tf.nn.relu),
         (9, tf.nn.softmax)
 ]
+print('Ladder:')
 ladder = LadderNetwork(layers, **hyperparameters)
-ladder.fit(np.concatenate([train, test]), binarized, verbose=True, batch_size=32, unsupervised_ratio=len(test)/len(train))
+ladder.fit(np.concatenate([train, test]), binarized, batch_size=32, unsupervised_batch=64)
 measure_metrics('ladder', X_test, y_bin_test, ladder.predict, ladder.predict_proba)
 print('MLP:')
 model = Sequential()

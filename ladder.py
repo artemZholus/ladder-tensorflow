@@ -8,7 +8,7 @@ import sklearn
 from utils import get_decay, semisupervised_batch_iterator
 from sklearn.base import BaseEstimator
 from sklearn.decomposition import PCA
-from sklearn.preprocessing import LabelBinarizer
+from sklearn.preprocessing import LabelBinarizer, LabelEncoder
 from sklearn import datasets
 from functools import wraps
 from utils import conditional_context
@@ -295,7 +295,7 @@ class LadderNetwork(BaseEstimator):
         self.__check_valid()
         return self.session.run(self.predict_probas, feed_dict={self.inputs: X})
 
-    def fit(self, X, y, epochs=5, batch_size=128, verbose=False, unsupervised_ratio=None):
+    def fit(self, X, y, epochs=5, batch_size=128, verbose=False, unsupervised_batch=None):
         """
         fits model
         this method should be launched in the session scope
@@ -306,19 +306,27 @@ class LadderNetwork(BaseEstimator):
         :param epochs: num of epochs of learning
         :param batch_size: batch size of supervised part
                 total batch size is batch_size * (1 + unsupervised_ratio)
-        :param unsupervised_ratio: ratio coefficient means how many unsupervised examples we
-                use against supervised one
+        :param unsupervised_batch: int > 0 unsupervised batch size
+                                or float in [0..1] ratio coefficient means how many unsupervised examples we
+                                use against supervised one
         :return: fitted model
         """
         self.__check_valid()
-        ratio = unsupervised_ratio
-        if unsupervised_ratio is None:
+        if isinstance(unsupervised_batch, int):
+            assert unsupervised_batch > 0
+            unsupervised_len = len(X) - len(y)
+            steps = len(y) / batch_size
+            unsupervised_bsize = unsupervised_len / steps
+            unsupervised_batch = unsupervised_bsize / batch_size
+        ratio = unsupervised_batch
+        if unsupervised_batch is None:
             ratio = len(X) / len(y)
         for epoch_num in range(epochs):
             print('Epoch No. {0}'.format(str(epoch_num)))
             for i, (unsupervised, (supervised, labels)) in enumerate(semisupervised_batch_iterator(X, y, batch_size, ratio)):
                 self.train_on_batch_supervised(supervised, labels)
-                self.train_on_batch_unsupervised(unsupervised)
+                if unsupervised is not None:
+                    self.train_on_batch_unsupervised(unsupervised)
                 if i % 10 == 0 and verbose:
                     print('iter: %d' % i)
 
@@ -369,6 +377,15 @@ class LadderNetwork(BaseEstimator):
                              w_sigma * tf.sigmoid(b_1 + w_1z * z + w_1u * u + w_1zu * z * u)
             return activation
 
+def load_data(path):
+    train = pd.read_csv(path + '/train.csv').drop('id', axis=1, inplace=False)
+    test = pd.read_csv(path + '/test.csv').drop('id', axis=1, inplace=False)
+    train_Y = LabelEncoder().fit_transform(train.target)
+    train_Y_binarized = LabelBinarizer().fit_transform(train.target)
+    train.drop('target', axis=1, inplace=True)
+    return train.values, train_Y, test.values, train_Y_binarized
+
+
 if __name__ == '__main__':
     layers = [
         (93, None),
@@ -378,7 +395,7 @@ if __name__ == '__main__':
         (64, tf.nn.relu),
         (9, tf.nn.softmax)
     ]
-    train, labels, test = load_data('./data')
+    train, labels, test, bin = load_data('./data')
     ladder = LadderNetwork(layers, **hyperparameters)
     input('All done to start learning!')
-    ladder.fit(train, labels, batch_size=32, unsupervised_ratio=1.0)
+    ladder.fit(train, bin, batch_size=16, unsupervised_batch=16, verbose=True)
