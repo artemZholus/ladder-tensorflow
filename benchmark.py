@@ -1,3 +1,5 @@
+import matplotlib
+matplotlib.use('Agg')
 import numpy as np
 import scipy as sp
 import pandas as pd
@@ -123,6 +125,7 @@ layers = [
 ]
 print('Ladder:')
 ladder = LadderNetwork(layers, **hyperparameters)
+ladder.log_all('./stat')
 ladder.fit(np.concatenate([train, test]), y_bin_train, batch_size=32, epochs=15, unsupervised_batch=64)
 measure_metrics('ladder', X_test, y_bin_test, ladder.predict, ladder.predict_proba)
 print('MLP:')

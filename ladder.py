@@ -6,6 +6,7 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import sklearn
 from utils import get_decay, semisupervised_batch_iterator
+from tqdm import tqdm
 from sklearn.base import BaseEstimator
 from sklearn.decomposition import PCA
 from sklearn.preprocessing import LabelBinarizer, LabelEncoder
@@ -14,8 +15,8 @@ from functools import wraps
 from utils import conditional_context
 
 hyperparameters = {
-    'learning_rate': 0.01,
-    'denoise_cost_init': 10,
+    'learning_rate': 0.0001,
+    'denoise_cost_init': 0,
     'denoise_cost': 'hyperbolic_decay',
     'denoise_cost_param': 1,
     'noise_std': 0.05,
@@ -102,14 +103,15 @@ class LadderNetwork(BaseEstimator):
                 with self.graph.name_scope(clean_str + '_layer_' + str(l)):
                     h_pre = tf.matmul(h[-1], encoder.weights[l])
                     m, v = tf.nn.moments(h_pre, axes=[0])
-                    h_pre = (h_pre - m) / v
+                    #h_pre = (h_pre - m) / v
                     if clean:
                         mean.append(m)
                         variance.append(v)
                     if not clean:
                         h_pre += tf.random_normal(tf.shape(h_pre)) * self.noise_std
                     z_pre.append(h_pre)
-                    h.append(self.activation[l](encoder.gamma[l] * (h_pre + encoder.beta[l])))
+                    #h.append(self.activation[l](encoder.gamma[l] * (h_pre + encoder.beta[l])))
+                    h.append(self.activation[l](h_pre))
             if clean:
                 return h, mean, variance, z_pre
             return h, z_pre
@@ -142,7 +144,7 @@ class LadderNetwork(BaseEstimator):
         print('\t- Building decoder...')
         print('\t\t- Initializing decoder weights...')
         decoder = self.__decoder_weights()
-        decoder.encoder = corrupted_encoder
+        decoder.encoder = clean_encoder
 
         def decoder_():
             z_pre = corrupted_encoder.preactivations
@@ -154,7 +156,7 @@ class LadderNetwork(BaseEstimator):
                     else:
                         u = tf.matmul(z_hat[l + 1], decoder.weights[l + 1])
                     z_hat[l] = LadderNetwork.Decoder.denoise_gauss(z_pre[l], u, self.layers[l + 1])
-                    z_hat[l] = (z_hat[l] - clean_encoder.mean[l]) / (clean_encoder.variance[l] + tf.constant(10e-8))
+                    #z_hat[l] = (z_hat[l] - clean_encoder.mean[l]) / (clean_encoder.variance[l] + tf.constant(10e-8))
             return z_hat
 
         z_hat = decoder_()
@@ -164,9 +166,8 @@ class LadderNetwork(BaseEstimator):
 
     def __supervised_cost(self):
         with self.graph.name_scope('supervised_cost'):
-            cost = -tf.reduce_mean(
-                tf.reduce_sum(self.outputs * tf.log(self.clean.activations[-1]) +
-                              (1 - self.outputs) * tf.log(1 - self.clean.activations[-1]), 1))  # why corrupted
+            cost = -tf.reduce_sum(
+                tf.reduce_sum(self.outputs * tf.log(self.corrupted.activations[-1]), 1))  # why corrupted
         return cost
 
     def __unsupervised_cost(self):
@@ -203,11 +204,11 @@ class LadderNetwork(BaseEstimator):
         return optimizer, cost
 
     def __build_predict_proba(self):
-        return self.clean.activations[-1]
+        return self.corrupted.activations[-1]
 
     def __build_prediction(self):
         with self.graph.name_scope('prediction'):
-            prediction = tf.argmax(self.clean.activations[-1], 1)
+            prediction = tf.argmax(self.corrupted.activations[-1], 1)
         return prediction
 
     def log_all(self, dir_path):
@@ -234,11 +235,11 @@ class LadderNetwork(BaseEstimator):
     def __log_all_histograms(self):
         encoder = []
         for attr in ['weights', 'beta', 'gamma']:
-            for layer in len(self.layers):
+            for layer in range(1, len(self.layers)):
                 encoder.append(tf.summary.histogram('encoder_layer_{0}_{1}'.format(str(layer), attr),
                                                     getattr(self.clean, attr)[layer]))
         decoder = []
-        for layer in len(self.layers):
+        for layer in range(len(self.layers) - 1):
             decoder.append(tf.summary.histogram('decoder_layer_{0}_weights'.format(str(layer)),
                                                 self.decoder.weights[layer]))
         self.supervised_histograms = tf.summary.merge(encoder)
@@ -314,19 +315,16 @@ class LadderNetwork(BaseEstimator):
         self.__check_valid()
         if isinstance(unsupervised_batch, int):
             assert unsupervised_batch > 0
-            unsupervised_len = len(X) - len(y)
-            steps = len(y) / batch_size
-            unsupervised_bsize = unsupervised_len / steps
-            unsupervised_batch = unsupervised_bsize / batch_size
-        ratio = unsupervised_batch
+            ratio = unsupervised_batch / batch_size
         if unsupervised_batch is None:
             ratio = len(X) / len(y)
         for epoch_num in range(epochs):
             print('Epoch No. {0}'.format(str(epoch_num)))
-            for i, (unsupervised, (supervised, labels)) in enumerate(semisupervised_batch_iterator(X, y, batch_size, ratio)):
+            for i, (unsupervised, (supervised, labels)) in tqdm(enumerate(semisupervised_batch_iterator(
+                    X, y, batch_size, ratio))):
                 self.train_on_batch_supervised(supervised, labels)
-                if unsupervised is not None:
-                    self.train_on_batch_unsupervised(unsupervised)
+                #if unsupervised is not None:
+                #    self.train_on_batch_unsupervised(unsupervised)
                 if i % 10 == 0 and verbose:
                     print('iter: %d' % i)
 
