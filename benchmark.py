@@ -5,6 +5,7 @@ import seaborn as sn
 import sklearn
 import keras
 import tensorflow as tf
+from tensorflow.python import debug
 
 import matplotlib.pyplot as plt
 import matplotlib.colors as colors
@@ -107,11 +108,11 @@ X_train, X_test, y_train, y_test, y_bin_train, y_bin_test = train_test_split(tra
 
 # ### Logistic regression
 print('Logistic Regression:')
-model = LogisticRegression()
+#model = LogisticRegression()
 print('fitting...')
-model.fit(X_train, y_train)
+#model.fit(X_train, y_train)
 print('calculating metrics...')
-measure_metrics('logreg', X_test, y_test, model.predict, model.predict_proba)
+#measure_metrics('logreg', X_test, y_test, model.predict, model.predict_proba)
 ### MLP
 layers = [
         (93, None),
@@ -123,6 +124,7 @@ layers = [
 ]
 print('Ladder:')
 ladder = LadderNetwork(layers, **hyperparameters)
+ladder.session = debug.LocalCLIDebugWrapperSession(ladder.session)
 ladder.fit(np.concatenate([train, test]), y_bin_train, batch_size=32, epochs=15, unsupervised_batch=64)
 measure_metrics('ladder', X_test, y_bin_test, ladder.predict, ladder.predict_proba)
 print('MLP:')
