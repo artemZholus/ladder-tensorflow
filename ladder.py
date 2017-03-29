@@ -15,7 +15,7 @@ from functools import wraps
 from utils import conditional_context
 
 hyperparameters = {
-    'learning_rate': 0.0001,
+    'learning_rate': 0.001,
     'denoise_cost_init': 10,
     'denoise_cost': 'hyperbolic_decay',
     'denoise_cost_param': 1,
@@ -198,7 +198,7 @@ class LadderNetwork(BaseEstimator):
     def __build_supervised_learning_rule(self):
         print('\t- Building supervised learning rule...')
         with self.graph.name_scope('sup_learning_rule'):
-            cost = self.__supervised_cost()
+            cost = tf.reduce_sum(self.__supervised_cost())
             optimizer = tf.train.AdamOptimizer(self.learning_rate).minimize(cost)
         print('\t- Supervised learning rule built!')
         return optimizer, cost
@@ -324,7 +324,7 @@ class LadderNetwork(BaseEstimator):
                     X, y, batch_size, ratio))):
                 self.train_on_batch_supervised(supervised, labels)
                 if unsupervised is not None:
-                    self.train_on_batch_unsupervised(unsupervised)
+                     self.train_on_batch_unsupervised(unsupervised)
                 if i % 10 == 0 and verbose:
                     print('iter: %d' % i)
 

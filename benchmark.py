@@ -7,7 +7,7 @@ import seaborn as sn
 import sklearn
 import keras
 import tensorflow as tf
-#from tensorflow.python import debug
+from tensorflow.python import debug
 
 import matplotlib.pyplot as plt
 import matplotlib.colors as colors
@@ -16,6 +16,7 @@ import matplotlib.cm as cmx
 from itertools import product
 
 from keras.models import Sequential
+from keras import backend as K
 from keras.layers import Dense
 
 from sklearn.base import BaseEstimator
@@ -30,7 +31,7 @@ from sklearn.metrics import roc_auc_score
 
 try:
     from MulticoreTSNE import MulticoreTSNE as TSNE
-except:
+except ImportError:
     from sklearn.manifold import TSNE
 
 from ladder import LadderNetwork, hyperparameters
@@ -129,7 +130,7 @@ ladder = LadderNetwork(layers, **hyperparameters)
 ladder.log_all('./stat')
 #ladder.session = debug.LocalCLIDebugWrapperSession(ladder.session)
 #ladder.session.add_tensor_filter("has_inf_or_nan", debug.has_inf_or_nan)
-ladder.fit(np.concatenate([train, test]), y_bin_train, batch_size=32, epochs=15, unsupervised_batch=64)
+ladder.fit(np.concatenate([X_train, test]), y_bin_train, batch_size=32, epochs=20, unsupervised_batch=64)
 measure_metrics('ladder', X_test, y_bin_test, ladder.predict, ladder.predict_proba)
 ladder.session.close()
 print('MLP:')
@@ -141,6 +142,7 @@ model.add(Dense(64, activation='relu'))
 model.add(Dense(9, activation='softmax'))
 print(model.summary())
 model.compile(loss='categorical_crossentropy', optimizer='adam', metrics=['categorical_accuracy'])
-model.fit(X_train, y_bin_train, verbose=True, epochs=15)
+model.fit(X_train, y_bin_train, verbose=True, epochs=20)
+
 measure_metrics('mlp', X_test, y_bin_test, model.predict_classes, model.predict)
 f.to_csv('experiments/measures.csv', index=False)
