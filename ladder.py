@@ -6,6 +6,7 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import sklearn
 from utils import get_decay, semisupervised_batch_iterator
+from tqdm import tqdm
 from sklearn.base import BaseEstimator
 from sklearn.decomposition import PCA
 from sklearn.preprocessing import LabelBinarizer, LabelEncoder
@@ -14,7 +15,7 @@ from functools import wraps
 from utils import conditional_context
 
 hyperparameters = {
-    'learning_rate': 0.01,
+    'learning_rate': 0.0001,
     'denoise_cost_init': 10,
     'denoise_cost': 'hyperbolic_decay',
     'denoise_cost_param': 1,
@@ -39,7 +40,7 @@ class LadderNetwork(BaseEstimator):
         self.learning_rate = learning_rate
         self.denoise_cost = decay
         self.noise_std = noise_std
-        with self.graph.as_default():
+        with self.graph.as_default(), tf.device('/gpu:0'):
             self.inputs = tf.placeholder(tf.float32, shape=(None, self.layers[0]))
             self.outputs = tf.placeholder(tf.float32)
             self.__build()
@@ -142,7 +143,7 @@ class LadderNetwork(BaseEstimator):
         print('\t- Building decoder...')
         print('\t\t- Initializing decoder weights...')
         decoder = self.__decoder_weights()
-        decoder.encoder = corrupted_encoder
+        decoder.encoder = clean_encoder
 
         def decoder_():
             z_pre = corrupted_encoder.preactivations
@@ -164,9 +165,9 @@ class LadderNetwork(BaseEstimator):
 
     def __supervised_cost(self):
         with self.graph.name_scope('supervised_cost'):
-            cost = -tf.reduce_mean(
-                tf.reduce_sum(self.outputs * tf.log(self.clean.activations[-1]) +
-                              (1 - self.outputs) * tf.log(1 - self.clean.activations[-1]), 1))  # why corrupted
+            cost = tf.nn.softmax_cross_entropy_with_logits(labels=self.outputs,
+                                                           logits=self.clean.preactivations[-1])
+            # why corrupted
         return cost
 
     def __unsupervised_cost(self):
@@ -203,11 +204,11 @@ class LadderNetwork(BaseEstimator):
         return optimizer, cost
 
     def __build_predict_proba(self):
-        return self.clean.activations[-1]
+        return self.corrupted.activations[-1]
 
     def __build_prediction(self):
         with self.graph.name_scope('prediction'):
-            prediction = tf.argmax(self.clean.activations[-1], 1)
+            prediction = tf.argmax(self.corrupted.activations[-1], 1)
         return prediction
 
     def log_all(self, dir_path):
@@ -234,11 +235,11 @@ class LadderNetwork(BaseEstimator):
     def __log_all_histograms(self):
         encoder = []
         for attr in ['weights', 'beta', 'gamma']:
-            for layer in len(self.layers):
+            for layer in range(1, len(self.layers)):
                 encoder.append(tf.summary.histogram('encoder_layer_{0}_{1}'.format(str(layer), attr),
                                                     getattr(self.clean, attr)[layer]))
         decoder = []
-        for layer in len(self.layers):
+        for layer in range(len(self.layers) - 1):
             decoder.append(tf.summary.histogram('decoder_layer_{0}_weights'.format(str(layer)),
                                                 self.decoder.weights[layer]))
         self.supervised_histograms = tf.summary.merge(encoder)
@@ -314,16 +315,13 @@ class LadderNetwork(BaseEstimator):
         self.__check_valid()
         if isinstance(unsupervised_batch, int):
             assert unsupervised_batch > 0
-            unsupervised_len = len(X) - len(y)
-            steps = len(y) / batch_size
-            unsupervised_bsize = unsupervised_len / steps
-            unsupervised_batch = unsupervised_bsize / batch_size
-        ratio = unsupervised_batch
+            ratio = unsupervised_batch / batch_size
         if unsupervised_batch is None:
             ratio = len(X) / len(y)
         for epoch_num in range(epochs):
             print('Epoch No. {0}'.format(str(epoch_num)))
-            for i, (unsupervised, (supervised, labels)) in enumerate(semisupervised_batch_iterator(X, y, batch_size, ratio)):
+            for i, (unsupervised, (supervised, labels)) in tqdm(enumerate(semisupervised_batch_iterator(
+                    X, y, batch_size, ratio))):
                 self.train_on_batch_supervised(supervised, labels)
                 if unsupervised is not None:
                     self.train_on_batch_unsupervised(unsupervised)

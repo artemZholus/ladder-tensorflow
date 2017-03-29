@@ -64,8 +64,8 @@ def semisupervised_batch_iterator(X, y, batch_size, ratio):
     for batch_cnt in range(len(X) // batch_size):
         start = batch_cnt * batch_size
         end = (batch_cnt + 1) * batch_size
-        start_unsupervised = (batch_cnt * unsupervised_batch_size) % unsupervised_batch_num
-        end_unsupervised = (batch_cnt + 1) * unsupervised_batch_size
+        start_unsupervised = ((batch_cnt % unsupervised_batch_num) * unsupervised_batch_size)
+        end_unsupervised = ((batch_cnt + 1) % unsupervised_batch_num) * unsupervised_batch_size
         if len(Z) + unsupervised_batch_size > end_unsupervised > len(Z):
             end_unsupervised = len(Z)
         else:
@@ -78,4 +78,5 @@ def semisupervised_batch_iterator(X, y, batch_size, ratio):
             Z_batch = None
         else:
             Z_batch = Z[perm_unsupervised[start_unsupervised:end_unsupervised]]
+        assert len(Z_batch) == unsupervised_batch_size
         yield Z_batch, (X_batch, y_batch)

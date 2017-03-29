@@ -1,2 +1,4 @@
+#!/usr/bin/env bash
 mkdir -p experiments
-python3 benchmark.py
+mkdir -p stat
+python3 benchmark.py | tee summary.txt
