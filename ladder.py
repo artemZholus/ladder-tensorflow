@@ -5,6 +5,7 @@ import scipy as sp
 import pandas as pd
 import matplotlib.pyplot as plt
 import sklearn
+import math
 from utils import get_decay, semisupervised_batch_iterator
 from tqdm import tqdm
 from sklearn.base import BaseEstimator
@@ -16,20 +17,23 @@ from utils import conditional_context
 
 hyperparameters = {
     'learning_rate': 0.001,
-    'denoise_cost_init': 10,
+    'denoise_cost_init': 1,
     'denoise_cost': 'hyperbolic_decay',
     'denoise_cost_param': 1,
-    'noise_std': 0.05,
+    'noise_std': 0.00,
 }
 
 
 class LadderNetwork(BaseEstimator):
-    def __init__(self, layers, learning_rate=1e-4, noise_std=0.05, denoise_cost=None,
+    def __init__(self, layers_, learning_rate=1e-4, noise_std=0.05, denoise_cost=None,
                  denoise_cost_init=None, denoise_cost_param=None):
-        self.layers, self.activation = zip(*layers)
+        self.layers_ = layers_
+        self.layers, self.activation = zip(*layers_)
         self.batch_size = -1
         self.graph = tf.Graph()
         self.session = tf.get_default_session()
+        self.denoise_cost_init = denoise_cost_init
+        self.denoise_cost_param = denoise_cost_param
         if self.session is not None:
             self.session.close()
         self.session = None
@@ -50,11 +54,25 @@ class LadderNetwork(BaseEstimator):
         self.unsupervised_histograms = None
         self.writer = None
         self.session = tf.InteractiveSession(graph=self.graph)
-        self.session.run(tf.global_variables_initializer())
+        self.initialized = False
+
+    def __str__(self):
+        return 'LadderNetwork(layers=[{0}], learning_rate={1}, noise_std={2}, denoise_cost={3},' \
+                             'denoise_cost_init={4}, denoise_cost_param={5})'.format(
+            ', '.join(map(str, list(zip(self.layers, self.activation)))),
+            str(self.learning_rate),
+            str(self.noise_std),
+            str(self.denoise_cost),
+            str(self.denoise_cost_init),
+            str(self.denoise_cost_param)
+        )
 
     def __check_valid(self):
         assert self.session is not None
         assert self.session.graph is self.graph or self.graph is tf.get_default_graph()
+        if not self.initialized:
+            self.session.run(tf.global_variables_initializer())
+            self.initialized = True
 
     def __build(self):
         print('- Building Ladder Network...')
@@ -62,7 +80,7 @@ class LadderNetwork(BaseEstimator):
         self.decoder = self.__build_decoder(self.corrupted, self.clean)
         self.supervised_optimizer, self.supervised_cost = self.__build_supervised_learning_rule()
         self.unsupervised_optimizer, self.unsupervised_cost, self.denoising_costs = \
-            self.__build_unsupervised_learning_rule()
+           self.__build_unsupervised_learning_rule()
         self.prediction = self.__build_prediction()
         self.predict_probas = self.__build_predict_proba()
         print('- Ladder Network built!')
@@ -102,15 +120,16 @@ class LadderNetwork(BaseEstimator):
             for l in range(1, len(self.layers)):
                 with self.graph.name_scope(clean_str + '_layer_' + str(l)):
                     h_pre = tf.matmul(h[-1], encoder.weights[l])
-                    m, v = tf.nn.moments(h_pre, axes=[0])
+                    m, v = tf.nn.moments(h_pre, [0])
                     h_pre = (h_pre - m) / v
                     if clean:
                         mean.append(m)
                         variance.append(v)
                     if not clean:
                         h_pre += tf.random_normal(tf.shape(h_pre)) * self.noise_std
+                    h_pre = encoder.gamma[l] * (h_pre + encoder.beta[l])
                     z_pre.append(h_pre)
-                    h.append(self.activation[l](encoder.gamma[l] * (h_pre + encoder.beta[l])))
+                    h.append(self.activation[l](h_pre))
             if clean:
                 return h, mean, variance, z_pre
             return h, z_pre
@@ -143,7 +162,7 @@ class LadderNetwork(BaseEstimator):
         print('\t- Building decoder...')
         print('\t\t- Initializing decoder weights...')
         decoder = self.__decoder_weights()
-        decoder.encoder = clean_encoder
+        decoder.encoder = corrupted_encoder
 
         def decoder_():
             z_pre = corrupted_encoder.preactivations
@@ -191,24 +210,24 @@ class LadderNetwork(BaseEstimator):
         print('\t- Building unsupervised learning rule...')
         with self.graph.name_scope('unsup_learning_rule'):
             u_cost, denoise_costs = self.__unsupervised_cost()
-            optimizer = tf.train.AdamOptimizer(self.learning_rate).minimize(u_cost)
+            optimizer = tf.train.AdamOptimizer(learning_rate=self.learning_rate, beta1=0.9, beta2=0.999).minimize(u_cost)
         print('\t- Unsupervised learning rule built!')
         return optimizer, u_cost, denoise_costs
 
     def __build_supervised_learning_rule(self):
         print('\t- Building supervised learning rule...')
         with self.graph.name_scope('sup_learning_rule'):
-            cost = tf.reduce_sum(self.__supervised_cost())
-            optimizer = tf.train.AdamOptimizer(self.learning_rate).minimize(cost)
+            cost = tf.reduce_mean(self.__supervised_cost())
+            optimizer = tf.train.AdamOptimizer(learning_rate=self.learning_rate, beta1=0.9, beta2=0.999).minimize(cost)
         print('\t- Supervised learning rule built!')
         return optimizer, cost
 
     def __build_predict_proba(self):
-        return self.corrupted.activations[-1]
+        return self.clean.activations[-1]
 
     def __build_prediction(self):
         with self.graph.name_scope('prediction'):
-            prediction = tf.argmax(self.corrupted.activations[-1], 1)
+            prediction = tf.argmax(self.clean.activations[-1], 1)
         return prediction
 
     def log_all(self, dir_path):
@@ -296,7 +315,7 @@ class LadderNetwork(BaseEstimator):
         self.__check_valid()
         return self.session.run(self.predict_probas, feed_dict={self.inputs: X})
 
-    def fit(self, X, y, epochs=5, batch_size=128, verbose=False, unsupervised_batch=None):
+    def fit(self, X, y, epochs=5, batch_size=128, labeled_size=1000, ratio=None, verbose=False):
         """
         fits model
         this method should be launched in the session scope
@@ -307,26 +326,21 @@ class LadderNetwork(BaseEstimator):
         :param epochs: num of epochs of learning
         :param batch_size: batch size of supervised part
                 total batch size is batch_size * (1 + unsupervised_ratio)
-        :param unsupervised_batch: int > 0 unsupervised batch size
-                                or float in [0..1] ratio coefficient means how many unsupervised examples we
-                                use against supervised one
+        :param ratio:
         :return: fitted model
         """
         self.__check_valid()
-        if isinstance(unsupervised_batch, int):
-            assert unsupervised_batch > 0
-            ratio = unsupervised_batch / batch_size
-        if unsupervised_batch is None:
-            ratio = len(X) / len(y)
+        y = y[:labeled_size]
+        if ratio is None:
+            ratio = math.ceil(len(X) / len(y))
         for epoch_num in range(epochs):
             print('Epoch No. {0}'.format(str(epoch_num)))
             for i, (unsupervised, (supervised, labels)) in tqdm(enumerate(semisupervised_batch_iterator(
                     X, y, batch_size, ratio))):
                 self.train_on_batch_supervised(supervised, labels)
                 if unsupervised is not None:
-                     self.train_on_batch_unsupervised(unsupervised)
-                if i % 10 == 0 and verbose:
-                    print('iter: %d' % i)
+                    for u in unsupervised:
+                        self.train_on_batch_unsupervised(u)
 
 
     class Encoder:
@@ -374,26 +388,3 @@ class LadderNetwork(BaseEstimator):
                 activation = b_0 + w_0z * z + w_0u * u + w_0zu * z * u + \
                              w_sigma * tf.sigmoid(b_1 + w_1z * z + w_1u * u + w_1zu * z * u)
             return activation
-
-def load_data(path):
-    train = pd.read_csv(path + '/train.csv').drop('id', axis=1, inplace=False)
-    test = pd.read_csv(path + '/test.csv').drop('id', axis=1, inplace=False)
-    train_Y = LabelEncoder().fit_transform(train.target)
-    train_Y_binarized = LabelBinarizer().fit_transform(train.target)
-    train.drop('target', axis=1, inplace=True)
-    return train.values, train_Y, test.values, train_Y_binarized
-
-
-if __name__ == '__main__':
-    layers = [
-        (93, None),
-        (1024, tf.nn.relu),
-        (512, tf.nn.relu),
-        (128, tf.nn.relu),
-        (64, tf.nn.relu),
-        (9, tf.nn.softmax)
-    ]
-    train, labels, test, bin = load_data('./data')
-    ladder = LadderNetwork(layers, **hyperparameters)
-    input('All done to start learning!')
-    ladder.fit(train, bin, batch_size=16, unsupervised_batch=16, verbose=True)
