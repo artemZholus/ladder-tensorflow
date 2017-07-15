@@ -1,36 +1,16 @@
 import matplotlib
-import math
 
 matplotlib.use('Agg')
 import numpy as np
-import scipy as sp
 import pandas as pd
 import seaborn as sn
-import sklearn
-import keras
 import tensorflow as tf
-from tqdm import tqdm
-from tensorflow.python import debug
 
 import matplotlib.pyplot as plt
-import matplotlib.colors as colors
-import matplotlib.cm as cmx
 
-from itertools import product
-
-from keras.models import Sequential
-from keras import backend as K
-from keras.optimizers import Adam, SGD
-from keras.layers import Dense, BatchNormalization, Activation
-
-from sklearn.base import BaseEstimator
-from sklearn.linear_model import LogisticRegression
-from sklearn.preprocessing import LabelBinarizer, LabelEncoder
-from sklearn.model_selection import train_test_split, GridSearchCV
+from sklearn.preprocessing import LabelBinarizer
 from sklearn.metrics import f1_score
 from sklearn.metrics import confusion_matrix
-from sklearn.metrics import precision_recall_curve
-from sklearn.metrics import roc_curve
 from sklearn.metrics import roc_auc_score
 
 try:
@@ -39,11 +19,15 @@ except ImportError:
     from sklearn.manifold import TSNE
 
 from ladder import LadderNetwork, hyperparameters
-from utils import mlp
-
+from utils import mlp, prepare_data, SemiSupervisedDataset
+import os
+from tensorflow.python import debug as tfdbg
+os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"   # see issue #152
+os.environ["CUDA_VISIBLE_DEVICES"] = "2"
 f = pd.DataFrame(columns=['model', *list(map(lambda x: 'f1_class_' + str(x),
                                              range(1, 11))), 'f1_mean', 'roc_auc'])
 path = './experiments'
+num_labeled = 100
 
 
 def measure_metrics(name, X, y_true, predict, predict_prob, j=[0]):
@@ -103,81 +87,57 @@ def measure_metrics(name, X, y_true, predict, predict_prob, j=[0]):
     # plt.close(fig)
 
 
-### Load data
-def load_data(path):
-    train = pd.read_csv(path + '/train.csv').drop('id', axis=1, inplace=False)
-    test = pd.read_csv(path + '/test.csv').drop('id', axis=1, inplace=False)
-    train_Y = LabelEncoder().fit_transform(train.target)
-    train_Y_binarized = LabelBinarizer().fit_transform(train.target)
-    train.drop('target', axis=1, inplace=True)
-    return train.values, train_Y, test.values, train_Y_binarized
-
-
 # train, labels, test, binarized = load_data('./data')
 from mnist import train_data, train_labels, test_labels, test_data
 
-perm = np.random.permutation(len(train_data))
-X_train = train_data.reshape((-1, 784))[perm]
-X_train = (X_train - X_train.mean()) / X_train.std()
-X_test = test_data.reshape((-1, 784))
-X_test = (X_test - X_test.mean()) / X_test.std()
-y_train = train_labels[perm]
-y_test = test_labels
-y_bin_train = LabelBinarizer().fit_transform(train_labels)[perm]
-y_bin_test = LabelBinarizer().fit_transform(test_labels)
-# X_train, X_test, y_train, y_test, y_bin_train, y_bin_test = train_test_split(train, labels, binarized, test_size=0.3)
-
-# ### Logistic regression
-# print('Logistic Regression:')
-# model = LogisticRegression()
-# print('fitting...')
-# model.fit(X_train[: 1000], y_train[:1000])
-# print('calculating metrics...')
-# measure_metrics('logreg', X_test, y_test, model.predict, model.predict_proba)
-### MLP
+X_train, y_train, X_test, y_test = prepare_data(train_data, train_labels, test_data, test_labels)
+semi_supervised_dataset = SemiSupervisedDataset(X_train, y_train, batch_size=100, shuffle=True, include_supervised=True)
+# MLP
 layers = [
     (784, None),
+    (128, tf.nn.relu),
     (128, tf.nn.relu),
     (10, tf.nn.softmax)
 ]
 print('Ladder:')
-def score_l(ladder, x, y):
-    pred = ladder.predict(x)
-    mean = f1_score(np.where(y == 1)[1], pred, average=None).mean()
-    return mean
-params = {
-    'denoise_cost_init': [0.1, 0.5, 1, 5, 7],
-    'denoise_cost_param': [0.1, 0.5, 1, 2, 2.71, 5, 7, 10],
-    'denoise_cost': ['hyperbolic_decay', 'exponential_decay']
-}
-grid = GridSearchCV(estimator=LadderNetwork(layers, **hyperparameters),
-                    param_grid=params,
-                    scoring=score_l,
-                    fit_params={'epochs': 20},
-                    n_jobs=1,
-                    pre_dispatch=1,
-                    refit=True)
-grid.fit(X_train, y_bin_train)
-print('--- BEST ESTIMATOR --- ')
-print(grid.best_estimator_)
-print('--- BEST PARAMS ---')
-print(grid.best_params_)
-print('--- RESULTS ---')
-print(grid.cv_results_)
-exit(0)
-#ladder = LadderNetwork(layers, **hyperparameters)
-#ladder.log_all('./stat')
-## ladder.session = debug.LocalCLIDebugWrapperSession(ladder.session)
-## ladder.session.add_tensor_filter("has_inf_or_nan", debug.has_inf_or_nan)
-# ladder.fit(X_train, y_bin_train, batch_size=64, epochs=15, ratio=0.)
-# measure_metrics('ladder0', X_test, y_bin_test, ladder.predict, ladder.predict_proba)
-# for i in range(1, 10):
-#     ladder.fit(X_train, y_bin_train[:1000], batch_size=64, epochs=1)
-#     measure_metrics('ladder' + str(i), X_test, y_bin_test, ladder.predict, ladder.predict_proba)
-# ladder.session.close()
-# print('MLP:')
-# fit, pred, prob = mlp(layers)
-# fit(X_train[:1000], y_bin_train[:1000], epochs=25, bsize=64)
+
+
+# def score_l(ladder, x, y):
+#     pred = ladder.predict(x)
+#     mean = f1_score(np.where(y == 1)[1], pred, average=None).mean()
+#     return mean
 #
-# measure_metrics('mlp', X_test, y_bin_test, pred, prob)
-# f.to_csv('experiments/measures.csv', index=False)
+#
+# params = {
+#     'denoise_cost_init': [0.1, 0.5, 1, 5, 7],
+#     'denoise_cost_param': [0.1, 0.5, 1, 2, 2.71, 5, 7, 10],
+#     'denoise_cost': ['hyperbolic_decay', 'exponential_decay']
+# }
+# grid = GridSearchCV(estimator=LadderNetwork(layers, **hyperparameters),
+#                     param_grid=params,
+#                     scoring=score_l,
+#                     fit_params={'epochs': 20},
+#                     n_jobs=1,
+#                     pre_dispatch=1,
+#                     refit=True)
+# grid.fit(X_train, y_bin_train)
+# print('--- BEST ESTIMATOR --- ')
+# print(grid.best_estimator_)
+# print('--- BEST PARAMS ---')
+# print(grid.best_params_)
+# print('--- RESULTS ---')
+# print(grid.cv_results_)
+# exit(0)
+ladder = LadderNetwork(layers, **hyperparameters)
+ladder.log_all('./stat')
+# ladder.session = tfdbg.LocalCLIDebugWrapperSession(ladder.session)
+# ladder.session.add_tensor_filter("has_inf_or_nan", tfdbg.has_inf_or_nan)
+ladder.fit(semi_supervised_dataset, epochs=15)
+measure_metrics('ladder0', X_test, y_test, ladder.predict, ladder.predict_proba)
+ladder.session.close()
+print('MLP:')
+fit, pred, prob = mlp(layers)
+fit(X_train[:1000], y_train[:1000], epochs=25, bsize=64)
+
+measure_metrics('mlp', X_test, y_test, pred, prob)
+f.to_csv('experiments/measures.csv', index=False)
