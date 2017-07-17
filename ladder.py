@@ -21,7 +21,7 @@ hyperparameters = {
     'denoise_cost': 'hyperbolic_decay',
     'denoise_cost_param': 1,
     'batch_size': 100,
-    'noise_std': 0.00,
+    'noise_std': 0.2,
 }
 
 
@@ -120,12 +120,13 @@ class LadderNetwork(BaseEstimator):
         """
         batch normalize + update average mean and variance of layer l
         """
-        mean, var = tf.nn.moments(batch, axes=[0])
-        assign_mean = self.running_mean[l - 1].assign(mean)
-        assign_var = self.running_var[l - 1].assign(var)
-        self.bn_assigns.append(self.ewma.apply([self.running_mean[l - 1], self.running_var[l - 1]]))
-        with tf.control_dependencies([assign_mean, assign_var]):
-            return (batch - mean) / tf.sqrt(var + 1e-10)
+        with tf.name_scope('update_bn'):
+            mean, var = tf.nn.moments(batch, axes=[0])
+            assign_mean = self.running_mean[l - 1].assign(mean)
+            assign_var = self.running_var[l - 1].assign(var)
+            self.bn_assigns.append(self.ewma.apply([self.running_mean[l - 1], self.running_var[l - 1]]))
+            with tf.control_dependencies([assign_mean, assign_var]):
+                return (batch - mean) / tf.sqrt(var + 1e-10)
 
     def __build_encoder(self):
         """
@@ -250,7 +251,7 @@ class LadderNetwork(BaseEstimator):
             """
             gaussian denoising function proposed in the original paper
             """
-            with graph.graph.name_scope('g_gauss'):
+            with graph.name_scope('g_gauss'):
                 wi = lambda inits, name: tf.Variable(inits * tf.ones([size]), name=name)
                 a1 = wi(0., 'a1')
                 a2 = wi(1., 'a2')
@@ -314,7 +315,7 @@ class LadderNetwork(BaseEstimator):
                         u = tf.matmul(z_hat[l + 1], decoder.weights[l + 1])
                     u = LadderNetwork.batch_normalization(u)
                     # z_hat[l] = LadderNetwork.Decoder.denoise_gauss(z_pre[l], u, self.layers[l + 1])
-                    z_hat[l] = LadderNetwork.Decoder.g_gauss(z_pre[l], u, self.layers[l + 1])
+                    z_hat[l] = LadderNetwork.Decoder.g_gauss(self.graph, z_pre[l], u, self.layers[l + 1])
                     z_hat_n[l] = (z_hat[l] - clean_encoder.mean[l]) / (clean_encoder.variance[l] + tf.constant(10e-8))
             return z_hat, z_hat_n
 
@@ -420,13 +421,24 @@ class LadderNetwork(BaseEstimator):
                                                                self.learning_phase: 1})
         return loss
 
-    def predict(self, X):
+    def predict_proba(self, X, verbose=False):
         self.__check_valid()
-        return self.session.run(self.prediction, feed_dict={self.inputs: X})
+        iters = int(math.ceil(len(X) / self.batch_size))
+        iters = tqdm(range(iters)) if verbose else range(iters)
+        out = np.zeros((len(X), self.layers[-1]))
+        for i in iters:
+            out[self.ith_slice(i, X)] = self.session.run(self.predict_probas, feed_dict={
+                self.inputs: X[self.ith_slice(i, X)],
+                self.learning_phase: 0
+            })
+        return out
 
-    def predict_proba(self, X):
-        self.__check_valid()
-        return self.session.run(self.predict_probas, feed_dict={self.inputs: X})
+    def predict(self, X, verbose=False):
+        out = self.predict_probas(X, verbose=verbose)
+        return np.eye(self.layers[-1], self.layers[-1])[np.argmax(out, 1)]
+
+    def ith_slice(self, i, data):
+        return slice(i * self.batch_size, min((i + 1) * self.batch_size, len(data)))
 
     def fit(self, data: SemiSupervisedDataset, epochs=5, ratio=None, verbose=False):
         """

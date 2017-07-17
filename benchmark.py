@@ -95,8 +95,11 @@ semi_supervised_dataset = SemiSupervisedDataset(X_train, y_train, batch_size=100
 # MLP
 layers = [
     (784, None),
-    (128, tf.nn.relu),
-    (128, tf.nn.relu),
+    (1000, tf.nn.relu),
+    (500, tf.nn.relu),
+    (250, tf.nn.relu),
+    (250, tf.nn.relu),
+    (250, tf.nn.relu),
     (10, tf.nn.softmax)
 ]
 print('Ladder:')
@@ -117,7 +120,7 @@ print('Ladder:')
 #                     param_grid=params,
 #                     scoring=score_l,
 #                     fit_params={'epochs': 20},
-#                     n_jobs=1,
+#                     n_jobs=
 #                     pre_dispatch=1,
 #                     refit=True)
 # grid.fit(X_train, y_bin_train)
@@ -133,11 +136,7 @@ ladder.log_all('./stat')
 # ladder.session = tfdbg.LocalCLIDebugWrapperSession(ladder.session)
 # ladder.session.add_tensor_filter("has_inf_or_nan", tfdbg.has_inf_or_nan)
 ladder.fit(semi_supervised_dataset, epochs=15)
-measure_metrics('ladder0', X_test, y_test, ladder.predict, ladder.predict_proba)
+measure_metrics('ladder', X_test, y_test, ladder.predict, ladder.predict_proba)
 ladder.session.close()
-print('MLP:')
-fit, pred, prob = mlp(layers)
-fit(X_train[:1000], y_train[:1000], epochs=25, bsize=64)
-
-measure_metrics('mlp', X_test, y_test, pred, prob)
+exit()
 f.to_csv('experiments/measures.csv', index=False)
