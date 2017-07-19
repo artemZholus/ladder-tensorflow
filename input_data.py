@@ -75,16 +75,16 @@ class DataSet(object):
         if fake_data:
             self._num_examples = 10000
         else:
-            assert images.shape[0] == labels.shape[0], (
-                "images.shape: %s labels.shape: %s" % (images.shape,
-                                                       labels.shape))
+            # assert images.shape[0] == labels.shape[0], (
+            #     "images.shape: %s labels.shape: %s" % (images.shape,
+            #                                            labels.shape))
             self._num_examples = images.shape[0]
 
             # Convert shape from [num examples, rows, columns, depth]
             # to [num examples, rows*columns] (assuming depth == 1)
-            assert images.shape[3] == 1
+            # assert images.shape[3] == 1
             images = images.reshape(images.shape[0],
-                                    images.shape[1] * images.shape[2])
+                                    784)
             # Convert from [0, 255] -> [0.0, 1.0].
             images = images.astype(numpy.float32)
             images = numpy.multiply(images, 1.0 / 255.0)
@@ -135,7 +135,7 @@ class DataSet(object):
 
 
 class SemiDataSet(object):
-    def __init__(self, images, labels, n_labeled):
+    def __init__(self, images, labels, n_labeled, n_classes):
         self.n_labeled = n_labeled
 
         # Unlabled DataSet
@@ -147,7 +147,7 @@ class SemiDataSet(object):
         shuffled_indices = numpy.random.permutation(indices)
         images = images[shuffled_indices]
         labels = labels[shuffled_indices]
-        y = numpy.array([numpy.arange(10)[l == 1][0] for l in labels])
+        y = numpy.array([numpy.arange(n_classes)[l == 1][0] for l in labels])
         idx = indices[y == 0][:5]
         n_classes = y.max() + 1
         n_from_each_class = n_labeled // n_classes
@@ -204,7 +204,7 @@ def read_data_sets(train_dir, n_labeled=100, fake_data=False, one_hot=False):
     train_images = train_images[VALIDATION_SIZE:]
     train_labels = train_labels[VALIDATION_SIZE:]
 
-    data_sets.train = SemiDataSet(train_images, train_labels, n_labeled)
+    data_sets.train = SemiDataSet(train_images, train_labels, n_labeled, 10)
     data_sets.validation = DataSet(validation_images, validation_labels)
     data_sets.test = DataSet(test_images, test_labels)
 

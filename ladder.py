@@ -147,7 +147,7 @@ class LadderNetwork:
             d['labeled']['z'][0], d['unlabeled']['z'][0] = split_lu(h)
             for l in range(1, L + 1):
                 with tf.name_scope('layer_%d' % l):
-                    print(("Layer ", l, ": ", self.layers[l - 1], " -> ", self.layers[l]))
+                    print("Layer ", l, ": ", self.layers[l - 1], " -> ", self.layers[l])
                     d['labeled']['h'][l - 1], d['unlabeled']['h'][l - 1] = split_lu(h)
                     z_pre = tf.matmul(h, self.weights['W'][l - 1])  # pre-activation
                     z_pre_l, z_pre_u = split_lu(z_pre)  # split labeled and unlabeled examples
@@ -372,7 +372,7 @@ class LadderNetwork:
     def ith_slice(self, i, data):
         return slice(i * self.batch_size, min((i + 1) * self.batch_size, len(data)))
 
-    def fit(self, data, epochs=5, ratio=None, verbose=False):
+    def fit(self, data, test_x, test_y, epochs=5, ratio=None, verbose=False):
         """
         fits model
         this method should be launched in the session scope
@@ -384,19 +384,20 @@ class LadderNetwork:
         :return: fitted model
         """
         for i in tqdm(list(range(0, epochs))):
-            images, labels = data.train.next_batch(self.batch_size)
+            # for images, labels in data:
+            images, labels = data.next_batch(self.batch_size)
             self.train_on_batch(images, labels)
             # self.session.run(self.train_step, feed_dict={self.inputs: images, self.outputs: labels, self.training: True})
             if i % 50 == 0:
                 print("Epoch ", i, ", Accuracy: ",
                       self.session.run(self.accuracy,
-                                       feed_dict={self.inputs: data.test.images,
-                                                  self.outputs: data.test.labels, self.training: False}),
+                                       feed_dict={self.inputs: test_x,
+                                                  self.outputs: test_y, self.training: False}),
                       "%")
                 with open('train_log', 'a') as train_log:
                     # write test accuracy to file "train_log"
                     log_i = [i] + self.session.run([self.accuracy],
-                                                   feed_dict={self.inputs: data.test.images,
-                                                              self.outputs: data.test.labels,
+                                                   feed_dict={self.inputs: test_x,
+                                                              self.outputs: test_y,
                                                               self.training: False})
                     train_log.write(','.join(map(str, log_i)) + '\n')
