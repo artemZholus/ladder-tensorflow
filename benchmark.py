@@ -18,8 +18,8 @@ try:
 except ImportError:
     from sklearn.manifold import TSNE
 
-from ladder import LadderNetwork, hyperparameters
-from utils import mlp, prepare_data, SemiSupervisedDataset
+from ladder1 import LadderNetwork, hyperparameters
+from utils import prepare_data, SemiSupervisedDataset
 import os
 from tensorflow.python import debug as tfdbg
 os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"   # see issue #152
@@ -28,7 +28,8 @@ f = pd.DataFrame(columns=['model', *list(map(lambda x: 'f1_class_' + str(x),
                                              range(1, 11))), 'f1_mean', 'roc_auc'])
 path = './experiments'
 num_labeled = 100
-
+if not os.path.exists(os.path.join(os.curdir, 'experiments')):
+    os.makedirs('experiments')
 
 def measure_metrics(name, X, y_true, predict, predict_prob, j=[0]):
     y_pred = predict(X)
@@ -38,6 +39,11 @@ def measure_metrics(name, X, y_true, predict, predict_prob, j=[0]):
         _, y_true = np.where(y_true == 1)
     else:
         y_true_bin = LabelBinarizer().fit_transform(y_true)
+    if len(y_pred.shape) > 1:
+        y_pred_bin = y_pred
+        _, y_pred = np.where(y_pred == 1)
+    else:
+        y_pred_bin = LabelBinarizer().fit_transform(y_pred)
     m = confusion_matrix(y_true, y_pred)
     f1 = f1_score(y_true, y_pred, average=None)
     roc_auc = roc_auc_score(y_true_bin, y_prob, average='macro')
@@ -91,7 +97,8 @@ def measure_metrics(name, X, y_true, predict, predict_prob, j=[0]):
 from mnist import train_data, train_labels, test_labels, test_data
 
 X_train, y_train, X_test, y_test = prepare_data(train_data, train_labels, test_data, test_labels)
-semi_supervised_dataset = SemiSupervisedDataset(X_train, y_train, batch_size=100, shuffle=True, include_supervised=True)
+y_test_bin = LabelBinarizer().fit_transform(y_test)
+# semi_supervised_dataset = SemiSupervisedDataset(X_train, y_train, batch_size=100, shuffle=True, include_supervised=True)
 # MLP
 layers = [
     (784, None),
@@ -135,7 +142,9 @@ ladder = LadderNetwork(layers, **hyperparameters)
 ladder.log_all('./stat')
 # ladder.session = tfdbg.LocalCLIDebugWrapperSession(ladder.session)
 # ladder.session.add_tensor_filter("has_inf_or_nan", tfdbg.has_inf_or_nan)
-ladder.fit(semi_supervised_dataset, epochs=15)
+from input_data import read_data_sets
+data = read_data_sets("MNIST_data", n_labeled=num_labeled, one_hot=True)
+ladder.fit(data, epochs=900)
 measure_metrics('ladder', X_test, y_test, ladder.predict, ladder.predict_proba)
 ladder.session.close()
 exit()

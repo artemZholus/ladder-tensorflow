@@ -23,6 +23,31 @@ hyperparameters = {
     'batch_size': 100,
     'noise_std': 0.2,
 }
+import tensorflow as tf
+
+import math
+import os
+import csv
+from tqdm import tqdm
+
+os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"  # see issue #152
+os.environ["CUDA_VISIBLE_DEVICES"] = "2"
+
+layer_sizes = [784, 1000, 500, 250, 250, 250, 10]
+
+L = len(layer_sizes) - 1  # number of layers
+
+num_examples = 100
+num_epochs = 150
+num_labeled = 100
+
+starter_learning_rate = 0.02
+
+decay_after = 15  # epoch after which to begin learning rate decay
+
+batch_size = 100
+num_iter = int((num_examples / batch_size) * num_epochs)  # number of loop iterations
+
 
 
 class LadderNetwork(BaseEstimator):
@@ -51,8 +76,8 @@ class LadderNetwork(BaseEstimator):
             self.learning_phase = tf.placeholder(tf.bool)
             self.ewma = tf.train.ExponentialMovingAverage(decay=0.99)
             self.bn_assigns = []
-            self.running_mean = [tf.Variable(tf.constant(0.0, shape=[l]), trainable=False) for l in self.layers[1:]]
-            self.running_var = [tf.Variable(tf.constant(1.0, shape=[l]), trainable=False) for l in self.layers[1:]]
+            self.running_mean = []
+            self.running_var = []
             self.__build()
         self.supervised_summary = None
         self.unsupervised_summary = None
@@ -93,6 +118,7 @@ class LadderNetwork(BaseEstimator):
         with tf.control_dependencies([self.optimizer]):
             self.optimizer = tf.group(bn_updates)
         self.prediction = self.__build_prediction()
+        self.__build_accuracy()
         self.predict_probas = self.__build_predict_proba()
 
         print('- Ladder Network built!')
@@ -103,6 +129,11 @@ class LadderNetwork(BaseEstimator):
             encoder_bn_gamma = [None]
             encoder_bn_beta = [None]
             for i, shape in enumerate(zip(self.layers[:-1], self.layers[1:])):
+                with tf.name_scope('running'):
+                    self.running_mean.append(tf.Variable(tf.constant(0.0, shape=[shape[1]]),
+                                                         name='mean_%d' % i, trainable=False))
+                    self.running_var.append(tf.Variable(tf.constant(1.0, shape=[shape[1]]),
+                                                        name='var_%d' % i, trainable=False))
                 with self.graph.name_scope('weights_' + str(i)):
                     encoder_weights.append(tf.Variable(tf.random_normal(shape, name='weight_' + str(i))))
                     encoder_bn_beta.append(tf.Variable(tf.zeros([shape[1]]), name='beta_' + str(i)))
@@ -371,6 +402,9 @@ class LadderNetwork(BaseEstimator):
             prediction = tf.argmax(self.clean.labeled_activations[-1], 1)
         return prediction
 
+    def __build_accuracy(self):
+        pass
+
     def log_all(self, dir_path):
         """
         creates all logging instances
@@ -433,14 +467,18 @@ class LadderNetwork(BaseEstimator):
             })
         return out
 
+    def accuracy(self, x, y):
+        pred = self.predict(x)
+        return (np.argmax(pred, 1) == np.argmax(y, 1)).mean()
+
     def predict(self, X, verbose=False):
-        out = self.predict_probas(X, verbose=verbose)
+        out = self.predict_proba(X, verbose=verbose)
         return np.eye(self.layers[-1], self.layers[-1])[np.argmax(out, 1)]
 
     def ith_slice(self, i, data):
         return slice(i * self.batch_size, min((i + 1) * self.batch_size, len(data)))
 
-    def fit(self, data: SemiSupervisedDataset, epochs=5, ratio=None, verbose=False):
+    def fit(self, data, epochs=5, ratio=None, verbose=False):
         """
         fits model
         this method should be launched in the session scope
@@ -452,7 +490,16 @@ class LadderNetwork(BaseEstimator):
         :return: fitted model
         """
         self.__check_valid()
-        for epoch_num in range(epochs):
-            print('Epoch No. {0}'.format(str(epoch_num)))
-            for i, (x, y) in tqdm(enumerate(data)):
-                self.train_on_batch(x, y)
+        iter = list(range(0, epochs))
+        iter = tqdm(iter) if verbose else iter
+        for i in iter:
+            images, labels = data.train.next_batch(self.batch_size)
+            self.session.run(self.optimizer,
+                             feed_dict={self.inputs: images, self.outputs: labels, self.learning_phase: 1})
+            if i % 50 == 0 and verbose:
+                print("Epoch ", i, ", Accuracy: ",
+                      self.accuracy(data.test.images, data.test.labels) * 100, "%")
+        # for epoch_num in range(epochs):
+        #     print('Epoch No. {0}'.format(str(epoch_num)))
+        #     for i, (x, y) in tqdm(enumerate(data)):
+        #         self.train_on_batch(x, y)
