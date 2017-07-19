@@ -18,7 +18,7 @@ try:
 except ImportError:
     from sklearn.manifold import TSNE
 
-from ladder1 import LadderNetwork, hyperparameters
+from ladder import LadderNetwork, hyperparameters
 from utils import prepare_data, SemiSupervisedDataset
 import os
 from tensorflow.python import debug as tfdbg
@@ -27,7 +27,7 @@ os.environ["CUDA_VISIBLE_DEVICES"] = "2"
 f = pd.DataFrame(columns=['model', *list(map(lambda x: 'f1_class_' + str(x),
                                              range(1, 11))), 'f1_mean', 'roc_auc'])
 path = './experiments'
-num_labeled = 100
+num_labeled = 500
 if not os.path.exists(os.path.join(os.curdir, 'experiments')):
     os.makedirs('experiments')
 
@@ -144,7 +144,7 @@ ladder.log_all('./stat')
 # ladder.session.add_tensor_filter("has_inf_or_nan", tfdbg.has_inf_or_nan)
 from input_data import read_data_sets
 data = read_data_sets("MNIST_data", n_labeled=num_labeled, one_hot=True)
-ladder.fit(data, epochs=900)
+ladder.fit(data, epochs=2700)
 measure_metrics('ladder', X_test, y_test, ladder.predict, ladder.predict_proba)
 ladder.session.close()
 exit()
