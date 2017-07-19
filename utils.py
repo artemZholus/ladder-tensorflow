@@ -58,8 +58,8 @@ class SemiSupervisedDataset:
             self.unsupervised_x = self.unsupervised_x[perm]
         self.i_supervised = 0
         self.i_unsupervised = 0
-        self.supervised_steps = int(math.ceil(len(self.supervised_y) / self.batch_size))
-        self.unsupervised_steps = int(math.ceil(len(self.unsupervised_x) / self.batch_size))
+        self.supervised_steps = int(math.floor(len(self.supervised_y) / self.batch_size))
+        self.unsupervised_steps = int(math.floor(len(self.unsupervised_x) / self.batch_size))
 
     def reset_supervised(self):
         self.i_supervised = 0
