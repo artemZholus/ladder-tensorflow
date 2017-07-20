@@ -125,12 +125,12 @@ def prepare_data(train_data, train_labels, test_data, test_labels, num_labeled=1
 def join(l, u):
     return tf.concat([l, u] ,0)
 
-def labeled(x, batch_size=100):
+def labeled(x, batch_size=500):
     return tf.slice(x, [0, 0], [batch_size, -1]) if x is not None else x
 
-def unlabeled(x, batch_size=100):
+def unlabeled(x, batch_size=500):
     return tf.slice(x, [batch_size, 0], [-1, -1]) if x is not None else x
 
-def split_lu(x, batch_size=100):
+def split_lu(x, batch_size=500):
     return labeled(x, batch_size), unlabeled(x, batch_size)
 
