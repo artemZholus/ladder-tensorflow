@@ -143,20 +143,22 @@ class SemiDataSet(object):
 
         # Labeled DataSet
         self.num_examples = len(y)
-        indices = numpy.arange(self.num_examples)
-        shuffled_indices = numpy.random.permutation(indices)
-        x = x[shuffled_indices]
-        y = y[shuffled_indices]
-        y_ = numpy.array([numpy.arange(n_classes)[l == 1][0] for l in y])
-        idx = indices[y_ == 0][:5]
-        n_classes = y_.max() + 1
-        n_from_each_class = n_labeled // n_classes
-        i_labeled = []
-        for c in range(n_classes):
-            i = indices[y_ == c][:n_from_each_class]
-            i_labeled += list(i)
-        l_images = x[i_labeled]
-        l_labels = y[i_labeled]
+        # indices = numpy.arange(self.num_examples)
+        # shuffled_indices = numpy.random.permutation(indices)
+        # x = x[shuffled_indices]
+        # y = y[shuffled_indices]
+        # y_ = numpy.array([numpy.arange(n_classes)[l == 1][0] for l in y])
+        # idx = indices[y_ == 0][:5]
+        # n_classes = y_.max() + 1
+        # n_from_each_class = n_labeled // n_classes
+        # i_labeled = []
+        # for c in range(n_classes):
+        #     i = indices[y_ == c][:n_from_each_class]
+        #     i_labeled += list(i)
+        # l_images = x[i_labeled]
+        # l_labels = y[i_labeled]
+        l_images = x[:len(y)]
+        l_labels = y
         self.labeled_ds = DataSet(l_images, l_labels)
 
     def next_batch(self, batch_size):
