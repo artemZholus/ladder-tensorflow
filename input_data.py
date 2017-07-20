@@ -83,11 +83,11 @@ class DataSet(object):
             # Convert shape from [num examples, rows, columns, depth]
             # to [num examples, rows*columns] (assuming depth == 1)
             # assert images.shape[3] == 1
-            images = images.reshape(images.shape[0],
-                                    784)
+            # images = images.reshape(images.shape[0],
+            #                         784)
             # Convert from [0, 255] -> [0.0, 1.0].
             images = images.astype(numpy.float32)
-            images = numpy.multiply(images, 1.0 / 255.0)
+            # images = numpy.multiply(images, 1.0 / 255.0)
         self._images = images
         self._labels = labels
         self._epochs_completed = 0
@@ -135,28 +135,28 @@ class DataSet(object):
 
 
 class SemiDataSet(object):
-    def __init__(self, images, labels, n_labeled, n_classes):
+    def __init__(self, x, y, n_labeled, n_classes):
         self.n_labeled = n_labeled
 
         # Unlabled DataSet
-        self.unlabeled_ds = DataSet(images, labels)
+        self.unlabeled_ds = DataSet(x, numpy.zeros((len(x),)))
 
         # Labeled DataSet
-        self.num_examples = self.unlabeled_ds.num_examples
+        self.num_examples = len(y)
         indices = numpy.arange(self.num_examples)
         shuffled_indices = numpy.random.permutation(indices)
-        images = images[shuffled_indices]
-        labels = labels[shuffled_indices]
-        y = numpy.array([numpy.arange(n_classes)[l == 1][0] for l in labels])
-        idx = indices[y == 0][:5]
-        n_classes = y.max() + 1
+        x = x[shuffled_indices]
+        y = y[shuffled_indices]
+        y_ = numpy.array([numpy.arange(n_classes)[l == 1][0] for l in y])
+        idx = indices[y_ == 0][:5]
+        n_classes = y_.max() + 1
         n_from_each_class = n_labeled // n_classes
         i_labeled = []
         for c in range(n_classes):
-            i = indices[y == c][:n_from_each_class]
+            i = indices[y_ == c][:n_from_each_class]
             i_labeled += list(i)
-        l_images = images[i_labeled]
-        l_labels = labels[i_labeled]
+        l_images = x[i_labeled]
+        l_labels = y[i_labeled]
         self.labeled_ds = DataSet(l_images, l_labels)
 
     def next_batch(self, batch_size):

@@ -26,14 +26,16 @@ hyperparameters = {
     'denoise_cost': 'exponential_decay',
     'denoise_cost_param': 0.01,
     'denoise_cost_threshold': 0.1,
-    'batch_size': 100,
+    'batch_size': 500,
     'noise_std': 0.2,
+    'categorical': False
 }
 
 
 class LadderNetwork:
     def __init__(self, layers_, batch_size, learning_rate=1e-4, noise_std=0.3, denoise_cost=None,
-                 denoise_cost_init=None, denoise_cost_param=None, denoise_cost_threshold=None):
+                 denoise_cost_init=None, denoise_cost_param=None, denoise_cost_threshold=None,
+                 categorical=True):
         self.layers_ = layers_
         self.layers, self.activation = zip(*layers_)
         self.batch_size = batch_size
@@ -64,7 +66,7 @@ class LadderNetwork:
             print('=== Decoder ===')
             self.build_decoder()
             print("=== Cost ===")
-            self.build_cost()
+            self.build_cost(categorical=categorical)
         self.supervised_summary = None
         self.unsupervised_summary = None
         self.supervised_histograms = None
@@ -274,12 +276,16 @@ class LadderNetwork:
                             (tf.reduce_mean(tf.reduce_sum(tf.square(z_est_bn - z), 1)) / self.layers[l])
                             * self.denoising_cost[l])
 
-    def build_cost(self):
+    def build_cost(self, categorical=True):
         with tf.name_scope('loss'):
             self.u_cost = tf.add_n(self.d_cost)
 
             y_N = labeled(self.y_c)
-            self.cost = -tf.reduce_mean(tf.reduce_sum(self.outputs * tf.log(y_N), 1))  # supervised cost
+            if categorical:
+                self.cost = -tf.reduce_mean(tf.reduce_sum(self.outputs * tf.log(y_N), 1))  # supervised cost
+            else:
+                self.cost = -tf.reduce_mean(tf.reduce_sum(self.outputs * tf.log(y_N) +
+                                                          (1 - self.outputs) * (1 - tf.log(y_N)), 1))
             self.loss = self.cost + self.u_cost  # total cost
 
         with tf.name_scope('prediction'):
@@ -372,7 +378,7 @@ class LadderNetwork:
     def ith_slice(self, i, data):
         return slice(i * self.batch_size, min((i + 1) * self.batch_size, len(data)))
 
-    def fit(self, data, test_x, test_y, epochs=5, ratio=None, verbose=False):
+    def fit(self, data, test_x, test_y, epochs=None, ratio=None, verbose=False):
         """
         fits model
         this method should be launched in the session scope
@@ -383,6 +389,9 @@ class LadderNetwork:
         :param ratio:
         :return: fitted model
         """
+        steps = data.unlabeled_ds.num_examples // self.batch_size
+        if epochs is None:
+            epochs = steps
         for i in tqdm(list(range(0, epochs))):
             # for images, labels in data:
             images, labels = data.next_batch(self.batch_size)

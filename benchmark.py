@@ -16,7 +16,9 @@ from sklearn.metrics import confusion_matrix
 from sklearn.metrics import precision_recall_curve
 from sklearn.metrics import roc_curve
 from sklearn.metrics import roc_auc_score
-
+from sklearn.model_selection import train_test_split
+from tqdm import tqdm
+from input_data import SemiDataSet
 try:
     from MulticoreTSNE import MulticoreTSNE as TSNE
 except ImportError:
@@ -26,7 +28,7 @@ from ladder import LadderNetwork, hyperparameters
 from utils import prepare_data
 import os
 
-os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"   # see issue #152
+os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"  # see issue #152
 os.environ["CUDA_VISIBLE_DEVICES"] = "2"
 f = pd.DataFrame(columns=['model', *list(map(lambda x: 'f1_class_' + str(x),
                                              range(1, 11))), 'f1_mean', 'roc_auc'])
@@ -34,6 +36,7 @@ path = './experiments'
 num_labeled = 500
 if not os.path.exists(os.path.join(os.curdir, 'experiments')):
     os.makedirs('experiments')
+
 
 def measure_metrics(name, X, y_true, predict, predict_prob, j=[0]):
     y_pred = predict(X)
@@ -96,24 +99,44 @@ def measure_metrics(name, X, y_true, predict, predict_prob, j=[0]):
     fig.savefig(path + '/{0}_roc_curve.png'.format(name))
     plt.close(fig)
 
+print('=== read data ===')
+data_it = pd.read_csv('/home/azholus/data/q2norm_siders_unsupervised+supervised.csv', iterator=True, chunksize=500,
+                      low_memory=False)
+data = pd.concat(tqdm(data_it, total=374 * 2), ignore_index=True)
 
-# train, labels, test, binarized = load_data('./data')
-from mnist import train_data, train_labels, test_labels, test_data
-X_train, y_train, X_test, y_test = prepare_data(train_data, train_labels, test_data, test_labels)
-y_test_bin = LabelBinarizer().fit_transform(y_test)
-#semi_supervised_dataset = SemiSupervisedDataset(X_train, y_train, batch_size=100, shuffle=True, include_supervised=True)
+
+print('=== transform data ===')
+gene_first = data.columns.tolist().index('pert_doseunit') + 1
+gene_last = data.columns.tolist().index('ZW10')
+
+genes = data.values[:,gene_first:gene_last]
+genes = genes.astype(np.float32)
+genes = pd.DataFrame(data=genes, columns=data.columns[gene_first:gene_last])
+side_ef = data[data.supervised].values[:, gene_last + 1:]
+side_ef = side_ef.astype(np.float32)
+side_ef = pd.DataFrame(data=side_ef, columns=data.columns[gene_last + 1:])
+
+side_ef = pd.DataFrame(data=(side_ef.values > 0).astype(np.float32), columns=side_ef.columns)
+
+data = genes.values
+labels = side_ef.values
+labeled_data = data[:len(labels)]
+unlabeled_data = data[len(labels):]
+X_train, X_test, y_train, y_test = train_test_split(labeled_data, labels, test_size=0.3)
+X_train = np.vstack([X_train, unlabeled_data])
+
+data = SemiDataSet(x=X_train, y=y_train, n_labeled=len(side_ef), n_classes=len(side_ef.columns))
 # MLP
 layers = [
-    (784, None),
+    (len(genes.columns), None),
     (1000, tf.nn.relu),
     (500, tf.nn.relu),
     (250, tf.nn.relu),
     (250, tf.nn.relu),
     (250, tf.nn.relu),
-    (10, tf.nn.softmax)
+    (len(side_ef.columns), tf.nn.sigmoid)
 ]
-print('Ladder:')
-
+print('=== building ladder network ===')
 
 # def score_l(ladder, x, y):
 #     pred = ladder.predict(x)
@@ -145,14 +168,8 @@ ladder = LadderNetwork(layers, **hyperparameters)
 ladder.log_all('./stat')
 # ladder.session = tfdbg.LocalCLIDebugWrapperSession(ladder.session)
 # ladder.session.add_tensor_filter("has_inf_or_nan", tfdbg.has_inf_or_nan)
-from input_data import read_data_sets
-from utils import SemiSupervisedDataset
-from input_data import SemiDataSet
-#data = read_data_sets("MNIST_data", n_labeled=num_labeled, one_hot=True)
-# data = SemiSupervisedDataset(X_train / 255, y_train, batch_size=100)
-data = SemiDataSet(train_data, np.eye(10)[train_labels], n_labeled=100, n_classes=10)
-ladder.fit(data, epochs=2700, test_x=X_test / 255, test_y=y_test_bin)
+print('=== training ===')
+ladder.fit(data, test_x=X_test, test_y=y_test)
 measure_metrics('ladder', X_test, y_test, ladder.predict, ladder.predict_proba)
 ladder.session.close()
-exit()
 f.to_csv('experiments/measures.csv', index=False)
