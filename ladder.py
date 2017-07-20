@@ -39,6 +39,7 @@ class LadderNetwork:
         self.layers_ = layers_
         self.layers, self.activation = zip(*layers_)
         self.batch_size = batch_size
+        self.final_activation = tf.nn.softmax if categorical else tf.nn.sigmoid
         self.graph = tf.Graph()
         self.session = tf.get_default_session()
         self.denoise_cost_init = denoise_cost_init
@@ -192,7 +193,7 @@ class LadderNetwork:
 
                     if l == L:
                         # use softmax activation in output layer
-                        h = tf.nn.softmax(self.weights['gamma'][l - 1] * (z + self.weights["beta"][l - 1]))
+                        h = self.final_activation(self.weights['gamma'][l - 1] * (z + self.weights["beta"][l - 1]))
                     else:
                         # use ReLU activation in hidden layers
                         h = tf.nn.relu(z + self.weights["beta"][l - 1])
