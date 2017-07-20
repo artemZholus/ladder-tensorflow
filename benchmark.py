@@ -112,19 +112,20 @@ gene_last = data.columns.tolist().index('ZW10')
 genes = data.values[:,gene_first:gene_last]
 genes = genes.astype(np.float32)
 genes = pd.DataFrame(data=genes, columns=data.columns[gene_first:gene_last])
+genes = pd.DataFrame(data=genes.values / genes.max().values, columns=data.columns[gene_first:gene_last])
 side_ef = data[data.supervised].values[:, gene_last + 1:]
 side_ef = side_ef.astype(np.float32)
 side_ef = pd.DataFrame(data=side_ef, columns=data.columns[gene_last + 1:])
 
-side_ef = pd.DataFrame(data=(side_ef.values > 0).astype(np.float32), columns=side_ef.columns)
-
+side_ef = pd.DataFrame(data=(side_ef.values > 0).astype(np.float32)[:,:26], columns=side_ef.columns[:26])
+print(side_ef.values.shape)
 data = genes.values
 labels = side_ef.values
 labeled_data = data[:len(labels)]
 unlabeled_data = data[len(labels):]
 X_train, X_test, y_train, y_test = train_test_split(labeled_data, labels, test_size=0.3)
 X_train = np.vstack([X_train, unlabeled_data])
-
+print(y_train.shape)
 data = SemiDataSet(x=X_train, y=y_train, n_labeled=len(side_ef), n_classes=len(side_ef.columns))
 # MLP
 layers = [
