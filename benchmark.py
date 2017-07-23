@@ -100,21 +100,30 @@ def measure_metrics(name, X, y_true, predict, predict_prob, j=[0]):
     plt.close(fig)
 
 print('=== read data ===')
-data_it = pd.read_csv('/home/azholus/data/q2norm_siders_unsupervised+supervised.csv', iterator=True, chunksize=500,
+fname = 'q2norm_siders_unsupervised+supervised.csv'
+#fname = 'first10000.csv'
+data_it = pd.read_csv('/home/azholus/data/' + fname, iterator=True, chunksize=500,
                       low_memory=False)
-data = pd.concat(tqdm(data_it, total=374 * 2), ignore_index=True)
+data = pd.concat(tqdm(data_it), ignore_index=True)
 
 
 print('=== transform data ===')
 gene_first = data.columns.tolist().index('pert_doseunit') + 1
 gene_last = data.columns.tolist().index('ZW10')
 
+print('=== transform data ===')
 genes = data.values[:,gene_first:gene_last]
+print('=== transform data ===')
 genes = genes.astype(np.float32)
+print('=== transform data ===')
 genes = pd.DataFrame(data=genes, columns=data.columns[gene_first:gene_last])
+print('=== transform data ===')
 genes = pd.DataFrame(data=genes.values / genes.max().values, columns=data.columns[gene_first:gene_last])
+print('=== transform data ===')
 side_ef = data[data.supervised].values[:, gene_last + 1:]
+print('=== transform data ===')
 side_ef = side_ef.astype(np.float32)
+print('=== transform data ===')
 side_ef = pd.DataFrame(data=side_ef, columns=data.columns[gene_last + 1:])
 
 side_ef = pd.DataFrame(data=(side_ef.values > 0).astype(np.float32)[:,:26], columns=side_ef.columns[:26])
@@ -165,10 +174,11 @@ print('=== building ladder network ===')
 # print('--- RESULTS ---')
 # print(grid.cv_results_)
 # exit(0)
+from tensorflow.python import debug as tfdbg
 ladder = LadderNetwork(layers, **hyperparameters)
 ladder.log_all('./stat')
-# ladder.session = tfdbg.LocalCLIDebugWrapperSession(ladder.session)
-# ladder.session.add_tensor_filter("has_inf_or_nan", tfdbg.has_inf_or_nan)
+#ladder.session = tfdbg.LocalCLIDebugWrapperSession(ladder.session)
+#ladder.session.add_tensor_filter("has_inf_or_nan", tfdbg.has_inf_or_nan)
 print('=== training ===')
 ladder.fit(data, test_x=X_test, test_y=y_test)
 measure_metrics('ladder', X_test, y_test, ladder.predict, ladder.predict_proba)

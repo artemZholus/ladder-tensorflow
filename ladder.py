@@ -286,7 +286,7 @@ class LadderNetwork:
                 self.cost = -tf.reduce_mean(tf.reduce_sum(self.outputs * tf.log(y_N), 1))  # supervised cost
             else:
                 self.cost = -tf.reduce_mean(tf.reduce_sum(self.outputs * tf.log(y_N) +
-                                                          (1 - self.outputs) * (1 - tf.log(y_N)), 1))
+                                                          (1 - self.outputs) * (tf.log(1 - y_N)), 1))
             self.loss = self.cost + self.u_cost  # total cost
 
         with tf.name_scope('prediction'):
